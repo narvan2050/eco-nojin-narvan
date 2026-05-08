@@ -1,0 +1,79 @@
+name: "سپر امنیتی خودکار - اسکن ساعتی"
+
+on:
+  schedule:
+    # اجرا هر ۱ ساعت (راس دقیقه ۰ هر ساعت)
+    - cron: '0 * * * *'
+  workflow_dispatch:  # امکان اجرای دستی
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+  issues: write
+
+jobs:
+  # ─── تحلیل ایستای کد (SAST) + تشخیص اسرار ───
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          languages: javascript, python
+
+      - name: Semgrep SAST Scan
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: p/default
+
+      - name: Gitleaks Secrets Detection
+        uses: gitleaks/gitleaks-action@v2
+
+  # ─── اسکن وابستگی‌ها ───
+  dependency-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+    
+      - name: Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # ─── تست نفوذ پویا (DAST) با OWASP ZAP ───
+  dast-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ZAP Full Security Scan
+        uses: zaproxy/action-full-scan@v0.13.0
+        with:
+          target: 'https://your-econojin-url.com'  # ← آدرس وب‌سایت خود را جایگزین کنید
+          fail_on_severity: 'High'
+
+  # ─── حمله و اعتبارسنجی خودکار با Strix ───
+  attack-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Strix
+        run: npm install -g strix
+
+      - name: Run Strix Penetration Test
+        run: strix scan --target https://your-econojin-url.com --format json
+        continue-on-error: true
