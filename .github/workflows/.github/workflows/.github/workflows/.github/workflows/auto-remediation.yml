@@ -1,0 +1,25 @@
+name: "رفع خودکار آسیب‌پذیری با هوش مصنوعی"
+
+on:
+  workflow_run:
+    workflows: ["سپر امنیتی خودکار - اسکن ساعتی"]
+    types:
+      - completed
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  auto-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AppSec-Sentinel Auto-Remediation
+        uses: appsec-sentinel/appsec-sentinel-action@v1
+        with:
+          ai_provider: 'github-models'  # بدون نیاز به API Key خارجی
+          auto_fix: true
+          create_pr: true
