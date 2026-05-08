@@ -1,0 +1,52 @@
+name: Create All Service Pages and Sidebar
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  create-files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Create Sidebar Component
+        run: |
+          mkdir -p src/components
+          cat > src/components/DashboardSidebar.tsx << 'SIDEBAREOF'
+          import { Package, ShoppingBag, BookOpen, MessageSquare, GraduationCap, Mail, BarChart, Workflow, ClipboardCheck, Wallet, Ticket, Users, MessageCircle, FileText, Kanban, Heart, Activity, Search, Bot, Key } from "lucide-react";
+          // ... محتوای کامل سایدبار اینجا قرار می‌گیره
+          SIDEBAREOF
+
+      - name: Create Service Pages
+        run: |
+          SERVICES=("warehouse:8081:انبارداری:Package" "store:9000:فروشگاه:ShoppingBag" "library:8082:کتابخانه:BookOpen" "chat:3001:چت:MessageSquare" "lms:8083:آموزش:GraduationCap" "newsletter:8084:خبرنامه:Mail" "analytics:8085:آنالیتیکس:BarChart" "automation:5678:اتوماسیون:Workflow" "surveys:8086:نظرسنجی:ClipboardCheck" "payments:49392:کیف_پول:Wallet" "tickets:8087:تیکتینگ:Ticket" "crm:8088:CRM:Users" "forum:8089:انجمن:MessageCircle" "documents:8090:اسناد:FileText" "projects:8091:پروژه‌ها:Kanban" "social:8092:شبکه_اجتماعی:Heart" "monitoring:8093:مانیتورینگ:Activity" "explorer:8094:بلاک‌چین:Search" "ai-agents:3003:هاب_AI:Bot" "sso:8095:احراز_هویت:Key")
+          
+          for svc in "${SERVICES[@]}"; do
+            IFS=':' read -r name port title icon <<< "$svc"
+            dir="src/app/(dashboard)/$name"
+            mkdir -p "$dir"
+            cat > "$dir/page.tsx" << PAGEEOF
+          export default function ${title// /}Page() {
+            return (
+              <div className="flex flex-col h-full">
+                <h2 className="text-2xl font-bold mb-4">$title</h2>
+                <iframe src="http://localhost:$port" className="w-full flex-1 border-0 rounded-lg" style={{ minHeight: "80vh" }} />
+              </div>
+            );
+          }
+          PAGEEOF
+          done
+
+      - name: Commit and Push
+        run: |
+          git add .
+          git diff --quiet && git diff --staged --quiet || git commit -m "✨ Add all 21 service pages and sidebar"
+          git push
