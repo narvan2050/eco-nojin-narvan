@@ -1,0 +1,11 @@
+# docker-compose.override.yml - تنظیمات با رمز عبور هاردکد شده
+version: '3.8'
+services:
+  db:
+    environment:
+      POSTGRES_PASSWORD: admin123   # ❌ رمز ضعیف و هاردکد
+      POSTGRES_USER: admin
+  backend:
+    environment:
+      - SECRET_KEY=production-secret-key   # ❌ کلید در فایل کانفیگ
+      - DEBUG=True   # ❌ دیباگ در محیط production
