@@ -1,0 +1,80 @@
+name: Eco Coder Agent (خودمختار)
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  auto-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: تحلیل Issue و ارائه راهکار با GitHub Models
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const title = issue.title;
+            const body = issue.body || '';
+
+            // فراخوانی GPT-4o رایگان از GitHub Models
+            const response = await github.request('POST /models/chat/completions', {
+              model: 'gpt-4o',
+              messages: [
+                {
+                  role: 'system',
+                  content: `You are an expert full‑stack developer. A user has opened an issue. 
+                  Your job:
+                  - Understand the problem.
+                  - Provide a solution.
+                  - If code changes are needed, describe them clearly. Output a JSON with these keys: 
+                    "summary" (short text in Persian),
+                    "files_to_create" (array of {path, content}),
+                    "files_to_modify" (array of {path, new_content}),
+                    "explanation" (step‑by‑step in Persian).`
+                },
+                { role: 'user', content: `Issue title: ${title}\n\nIssue body: ${body}` }
+              ],
+              temperature: 0.2
+            });
+
+            const gptOutput = response.data.choices[0].message.content;
+            
+            // ارسال پاسخ اولیه در Issue
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🤖 Eco Coder Agent\n\n${gptOutput}`
+            });
+
+            // تلاش برای تجزیه JSON از خروجی (اختیاری)
+            try {
+              const jsonMatch = gptOutput.match(/\{[\s\S]*\}/);
+              if (jsonMatch) {
+                const plan = JSON.parse(jsonMatch[0]);
+                
+                // ایجاد فایل‌های جدید
+                for (const file of (plan.files_to_create || [])) {
+                  const filePath = file.path;
+                  const content = file.content;
+                  await github.rest.repos.createOrUpdateFileContents({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    path: filePath,
+                    message: `auto: create ${filePath}`,
+                    content: Buffer.from(content).toString('base64'),
+                    branch: `auto-fix-${context.issue.number}`
+                  });
+                }
+              }
+            } catch (e) {
+              console.log("Could not parse JSON from GPT output", e.message);
+            }
