@@ -1,0 +1,140 @@
+name: "Eco Coder Pro - Agent هوشمند توسعه کد"
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'وظیفه مورد نظر (مثال: یک صفحه درباره ما با محتوای فارسی بساز)'
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  agent:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'agent-task'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: دریافت دستور کاربر
+        id: prompt
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "PROMPT=${{ github.event.inputs.task }}" >> $GITHUB_OUTPUT
+          else
+            echo "PROMPT=$(cat <<'EOF'
+          ${{ github.event.issue.title }}
+          ${{ github.event.issue.body }}
+          EOF
+          )" >> $GITHUB_OUTPUT
+          fi
+
+      - name: برنامه‌ریزی با GitHub Models
+        id: plan
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prompt = `${{ steps.prompt.outputs.PROMPT }}`;
+            const system = `You are an expert full-stack developer. A user has asked you to modify their Next.js project (eco-nojin-narvan). 
+            Repo structure: standard Next.js 16 with App Router, Tailwind, shadcn/ui. 
+            The project is already set up with a dashboard at src/app/(dashboard) and many service pages.
+            Your job:
+            - Understand the user's request.
+            - Create a plan as a JSON object with a single key "files". 
+              "files" is an array of objects, each object has "path" (string) and "content" (string).
+              Only include files that need to be CREATED or whose ENTIRE content needs to be REPLACED.
+              If no code changes are needed, return an empty array.
+            - Ensure all paths start from the repository root (e.g., "src/app/about/page.tsx").
+            - Write production-ready, clean TypeScript/React code. Use Tailwind CSS classes.
+            Do not include any other text, only the JSON object.`;
+
+            const response = await github.request('POST /models/chat/completions', {
+              model: 'gpt-4o',
+              messages: [
+                { role: 'system', content: system },
+                { role: 'user', content: prompt }
+              ],
+              temperature: 0.1
+            });
+
+            const planText = response.data.choices[0].message.content;
+            console.log('AI Plan:', planText);
+            // Extract JSON
+            const jsonMatch = planText.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) {
+              throw new Error('No JSON found in AI output');
+            }
+            const plan = JSON.parse(jsonMatch[0]);
+            return plan;
+
+      - name: اجرای برنامه و ساخت Pull Request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const plan = ${{ steps.plan.outputs.result }};
+            if (!plan || !plan.files || plan.files.length === 0) {
+              console.log('No file changes required.');
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: '✅ ایجنت بررسی کرد و نیازی به تغییر کد نیست.'
+              });
+              return;
+            }
+
+            // Create a unique branch name
+            const branchName = `agent-task-${context.issue.number || Date.now()}`;
+            const baseRef = context.payload.repository.default_branch;
+            const baseSha = (await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `heads/${baseRef}`
+            })).data.object.sha;
+
+            await github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `refs/heads/${branchName}`,
+              sha: baseSha
+            });
+
+            // Apply each file change
+            for (const file of plan.files) {
+              await github.rest.repos.createOrUpdateFileContents({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: file.path,
+                message: `Add/update ${file.path}`,
+                content: Buffer.from(file.content).toString('base64'),
+                branch: branchName
+              });
+            }
+
+            // Create pull request
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🤖 Agent: ${context.payload.issue?.title || 'Manual task'}`,
+              head: branchName,
+              base: baseRef,
+              body: `این Pull Request به‌طور خودکار توسط **Eco Coder Pro** ایجاد شده است.\n\nوظیفه درخواستی:\n> ${context.payload.issue?.body || '${{ steps.prompt.outputs.PROMPT }}'}\n\nلطفاً تغییرات را بررسی کنید.`
+            });
+
+            // Comment on issue (if triggered by issue)
+            if (context.payload.issue) {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `✅ **Eco Coder Pro** یک Pull Request برای این وظیفه باز کرد: ${pr.data.html_url}`
+              });
+            }
