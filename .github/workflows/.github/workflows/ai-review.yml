@@ -1,0 +1,82 @@
+name: "AI Review (GitHub Models - No API Key)"
+
+# فعال‌سازی روی Pull Request
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+# دسترسی‌های لازم
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: دریافت کد مخزن
+        uses: actions/checkout@v4
+
+      - name: گرفتن تغییرات PR (diff)
+        run: |
+          git fetch origin ${{ github.base_ref }} --depth=1
+          git diff origin/${{ github.base_ref }}...HEAD > diff.txt
+          echo "DIFF_SIZE=$(wc -c < diff.txt)" >> $GITHUB_ENV
+
+      - name: نصب پیش‌نیازها (Node.js)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: اجرای بررسی با چند مدل و ارسال کامنت
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const diff = fs.readFileSync('diff.txt', 'utf8');
+            
+            // اگر diff خیلی بزرگ بود، به اندازه معقول کوتاهش کن
+            const MAX_DIFF = 8000;
+            const diffSnippet = diff.length > MAX_DIFF 
+              ? diff.slice(0, MAX_DIFF) + "\n... (truncated)"
+              : diff;
+
+            // لیست مدل‌های رایگان GitHub Models
+            const models = [
+              { name: '🤖 GPT-4o', model: 'gpt-4o', system: 'You are an expert code reviewer. Summarize changes, find bugs, and suggest improvements in bullet points. Be concise.' },
+              { name: '🧠 Claude 3.5 Sonnet', model: 'claude-3.5-sonnet', system: 'You are a senior software engineer. Review the diff and highlight security issues, architecture flaws, and performance concerns.' },
+              { name: '⚡ Phi-3 Medium', model: 'Phi-3-medium-128k-instruct', system: 'You are a helpful code reviewer. Focus on code style, best practices, and potential edge cases.' },
+              { name: '🦙 Llama 3.1 8B', model: 'Meta-Llama-3.1-8B-Instruct', system: 'You are a meticulous reviewer. Look for logical errors, missing error handling, and documentation gaps.' }
+            ];
+
+            // پردازش هم‌زمان همه مدل‌ها
+            const reviews = await Promise.allSettled(
+              models.map(async (m) => {
+                try {
+                  const response = await github.request('POST /models/chat/completions', {
+                    model: m.model,
+                    messages: [
+                      { role: 'system', content: m.system },
+                      { role: 'user', content: `Review this pull request diff:\n\n${diffSnippet}` }
+                    ],
+                    max_tokens: 600,
+                    temperature: 0.2
+                  });
+                  const content = response.data.choices[0].message.content;
+                  return `## ${m.name}\n\n${content}\n`;
+                } catch (err) {
+                  return `## ${m.name}\n\n⚠️ خطا: ${err.message}\n`;
+                }
+              })
+            );
+
+            // جمع‌آوری خروجی‌ها
+            const body = reviews.map(r => r.status === 'fulfilled' ? r.value : `## ⚠️ مدل ناموفق\n\n${r.reason}`).join('\n\n---\n\n');
+
+            // ارسال کامنت در PR
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🧠 بازبینی خودکار توسط چند مدل (بدون API Key)\n\n${body}`
+            });
