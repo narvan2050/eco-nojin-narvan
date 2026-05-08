@@ -1,0 +1,22 @@
+name: انتشار غیرمتمرکز روی IPFS
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ساخت Frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: آپلود روی IPFS با Fleek
+        uses: fleekhq/action-deploy@v2
+        with:
+          apiKey: ${{ secrets.FLEEK_API_KEY }}
+          workDir: './out'
