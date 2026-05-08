@@ -1,0 +1,51 @@
+name: AI Issue Agent (بدون کلید)
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: حل مسئله با GitHub Models
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const title = issue.title;
+            const body = issue.body || '';
+
+            // استفاده از مدل GPT-4o رایگان داخل گیت‌هاب
+            const response = await github.request('POST /models/chat/completions', {
+              model: 'gpt-4o',
+              messages: [
+                {
+                  role: 'system',
+                  content: 'شما یک دستیار توسعه‌دهنده هستید. به کاربر کمک کنید مسئله را حل کند. اگر نیاز به کد است، یک راهکار کامل ارائه دهید. پاسخ را به فارسی بنویسید.'
+                },
+                {
+                  role: 'user',
+                  content: `عنوان مسئله: ${title}\n\nشرح مسئله:\n${body}`
+                }
+              ],
+              max_tokens: 800
+            });
+
+            const answer = response.data.choices[0].message.content;
+
+            // ارسال پاسخ در کامنت Issue
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🤖 دستیار هوشمند (بدون کلید)\n\n${answer}`
+            });
