@@ -1,0 +1,187 @@
+name: "Eco Coder Agent (DeepSeek)"
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'وظیفه مورد نظر'
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  agent:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'agent-task'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: دریافت مخزن
+        uses: actions/checkout@v4
+
+      - name: نصب پایتون
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: نصب وابستگی‌ها
+        run: pip install requests pyyaml
+
+      - name: اجرای ایجنت DeepSeek
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          MANUAL_TASK: ${{ github.event.inputs.task }}
+        run: |
+          python3 << 'PYEOF'
+          import os, json, requests, subprocess, sys, re, base64
+
+          # ─── تنظیمات ───
+          DEEPSEEK_API_KEY = os.environ["DEEPSEEK_API_KEY"]
+          GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
+          REPO = os.environ["GITHUB_REPOSITORY"]
+          EVENT = os.environ["EVENT_NAME"]
+
+          # دریافت دستور
+          if EVENT == "workflow_dispatch":
+              prompt = os.environ.get("MANUAL_TASK", "")
+          else:
+              title = os.environ.get("ISSUE_TITLE", "")
+              body = os.environ.get("ISSUE_BODY", "")
+              prompt = f"{title}\n{body}"
+
+          if not prompt or prompt.strip() == "":
+              print("❌ هیچ وظیفه‌ای دریافت نشد.")
+              sys.exit(0)
+
+          print(f"📝 وظیفه دریافت‌شده:\n{prompt}\n")
+
+          # ─── ۱. فراخوانی DeepSeek ───
+          system_prompt = """You are an expert full-stack developer. Based on the user request, produce ONLY a valid JSON object with the key "files". 
+          "files" is an array of objects, each object has "path" (string) and "content" (string) for the full file content.
+          Only include files that need to be CREATED or whose ENTIRE content must be REPLACED.
+          If no code changes are needed, return {"files": []}.
+          Do NOT include ANY text outside the JSON. Do NOT wrap JSON in markdown code blocks."""
+
+          print("🔄 در حال ارتباط با DeepSeek...")
+          resp = requests.post(
+              "https://api.deepseek.com/v1/chat/completions",
+              headers={
+                  "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                  "Content-Type": "application/json"
+              },
+              json={
+                  "model": "deepseek-chat",
+                  "messages": [
+                      {"role": "system", "content": system_prompt},
+                      {"role": "user", "content": prompt}
+                  ],
+                  "temperature": 0.1
+              },
+              timeout=120
+          )
+
+          if resp.status_code != 200:
+              print(f"❌ خطای API: {resp.status_code} - {resp.text}")
+              sys.exit(1)
+
+          data = resp.json()
+          raw_output = data["choices"][0]["message"]["content"]
+          print(f"📄 خروجی خام:\n{raw_output}\n")
+
+          # ─── ۲. استخراج JSON ───
+          json_match = re.search(r'\{[\s\S]*\}', raw_output)
+          if not json_match:
+              print("❌ هیچ JSON در خروجی پیدا نشد.")
+              sys.exit(1)
+
+          try:
+              plan = json.loads(json_match.group())
+          except json.JSONDecodeError as e:
+              print(f"❌ خطا در تجزیه JSON: {e}")
+              sys.exit(1)
+
+          if not isinstance(plan.get("files"), list) or len(plan["files"]) == 0:
+              print("ℹ️ هیچ فایلی برای تغییر نیاز نیست.")
+              sys.exit(0)
+
+          print(f"✅ {len(plan['files'])} فایل برای ایجاد/ویرایش پیدا شد.")
+
+          # ─── ۳. ساخت شاخه جدید ───
+          issue_num = os.environ.get("ISSUE_NUMBER", "manual")
+          branch_name = f"agent-deepseek-{issue_num}-{subprocess.check_output(['date', '+%s']).decode().strip()}"
+
+          headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+          api_url = f"https://api.github.com/repos/{REPO}"
+
+          # دریافت SHA شاخه main
+          r = requests.get(f"{api_url}/git/ref/heads/main", headers=headers)
+          r.raise_for_status()
+          main_sha = r.json()["object"]["sha"]
+
+          # ایجاد شاخه
+          requests.post(f"{api_url}/git/refs", headers=headers, json={
+              "ref": f"refs/heads/{branch_name}",
+              "sha": main_sha
+          }).raise_for_status()
+
+          print(f"🌿 شاخه '{branch_name}' ساخته شد.")
+
+          # ─── ۴. اعمال تغییرات ───
+          for file in plan["files"]:
+              path = file["path"]
+              content = file["content"]
+              print(f"📄 ایجاد/ویرایش: {path}")
+
+              requests.put(
+                  f"{api_url}/contents/{path}",
+                  headers=headers,
+                  json={
+                      "message": f"Add/update {path}",
+                      "content": base64.b64encode(content.encode()).decode(),
+                      "branch": branch_name
+                  }
+              )
+
+          # ─── ۵. ایجاد Pull Request ───
+          pr_title = f"🤖 DeepSeek: {prompt[:80]}"
+          pr_body = f"""این Pull Request به‌طور خودکار توسط **Eco Coder Agent (DeepSeek)** ایجاد شده است.
+
+          **وظیفه:**
+          {prompt}
+
+          **فایل‌های تغییرکرده:**
+          {chr(10).join(f'- `{f["path"]}`' for f in plan['files'])}
+          """
+
+          r = requests.post(f"{api_url}/pulls", headers=headers, json={
+              "title": pr_title,
+              "head": branch_name,
+              "base": "main",
+              "body": pr_body
+          })
+
+          if r.status_code == 201:
+              pr_url = r.json()["html_url"]
+              print(f"✅ Pull Request ساخته شد: {pr_url}")
+
+              # کامنت روی Issue (اگر از طریق Issue فعال شده)
+              if os.environ.get("ISSUE_NUMBER"):
+                  issue_num = int(os.environ["ISSUE_NUMBER"])
+                  requests.post(f"{api_url}/issues/{issue_num}/comments", headers=headers, json={
+                      "body": f"✅ **Eco Coder Agent (DeepSeek)** یک Pull Request باز کرد: {pr_url}"
+                  })
+          else:
+              print(f"❌ خطا در ساخت PR: {r.status_code} - {r.text}")
+              sys.exit(1)
+          PYEOF
