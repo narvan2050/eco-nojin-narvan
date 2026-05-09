@@ -1,0 +1,306 @@
+version: '3.8'
+
+# ============================================
+# اکونوژین - یکپارچه‌سازی ۵۰+ سرویس متن‌باز
+# ============================================
+
+services:
+  # ============================================
+  # ۱. ابزارهای ارتباطی و چت (Communication)
+  # ============================================
+  mattermost:
+    image: mattermost/mattermost-team-edition:latest
+    container_name: mattermost
+    ports:
+      - "3001:8065"
+    environment:
+      - MM_USERNAME=admin
+      - MM_PASSWORD=admin123
+    restart: unless-stopped
+
+  rocket-chat:
+    image: rocket.chat:latest
+    container_name: rocket-chat
+    ports:
+      - "3002:3000"
+    restart: unless-stopped
+
+  zulip:
+    image: zulip/docker-zulip:latest
+    container_name: zulip
+    ports:
+      - "3003:80"
+    environment:
+      - SETTING_EXTERNAL_HOST=localhost
+    restart: unless-stopped
+
+  # ============================================
+  # ۲. مدیریت پروژه و وظایف (Project Management)
+  # ============================================
+  taiga:
+    image: taigaio/taiga-back:latest
+    container_name: taiga
+    ports:
+      - "4001:8000"
+    restart: unless-stopped
+
+  kanboard:
+    image: kanboard/kanboard:latest
+    container_name: kanboard
+    ports:
+      - "4002:80"
+    restart: unless-stopped
+
+  leantime:
+    image: leantime/leantime:latest
+    container_name: leantime
+    ports:
+      - "4003:80"
+    restart: unless-stopped
+
+  # ============================================
+  # ۳. مدیریت اسناد و محتوا (Document & Content)
+  # ============================================
+  paperless-ngx:
+    image: paperlessngx/paperless-ngx:latest
+    container_name: paperless-ngx
+    ports:
+      - "5001:8000"
+    volumes:
+      - paperless_data:/usr/src/paperless/data
+      - paperless_media:/usr/src/paperless/media
+    environment:
+      - PAPERLESS_REDIS_URL=redis://redis:6379
+      - PAPERLESS_DBENGINE=sqlite
+    restart: unless-stopped
+
+  bookstack:
+    image: lscr.io/linuxserver/bookstack:latest
+    container_name: bookstack
+    ports:
+      - "5002:80"
+    environment:
+      - APP_URL=http://localhost:5002
+      - DB_HOST=bookstack_db
+      - DB_USER=bookstack
+      - DB_PASS=bookstack
+      - DB_DATABASE=bookstack
+    restart: unless-stopped
+
+  # ============================================
+  # ۴. مدیریت ارتباط با مشتری (CRM)
+  # ============================================
+  espo-crm:
+    image: espocrm/espocrm:latest
+    container_name: espo-crm
+    ports:
+      - "6001:8080"
+    restart: unless-stopped
+
+  twenty-crm:
+    image: twentycrm/twenty:latest
+    container_name: twenty-crm
+    ports:
+      - "6002:3000"
+    restart: unless-stopped
+
+  # ============================================
+  # ۵. مدیریت منابع سازمانی (ERP)
+  # ============================================
+  erpnext:
+    image: frappe/erpnext:latest
+    container_name: erpnext
+    ports:
+      - "7001:8000"
+    restart: unless-stopped
+
+  odoo:
+    image: odoo:latest
+    container_name: odoo
+    ports:
+      - "7002:8069"
+    restart: unless-stopped
+
+  # ============================================
+  # ۶. تحلیل داده و هوش تجاری (Analytics & BI)
+  # ============================================
+  metabase:
+    image: metabase/metabase:latest
+    container_name: metabase
+    ports:
+      - "8001:3000"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "8002:3000"
+    restart: unless-stopped
+
+  # ============================================
+  # ۷. مدیریت دانش و ویکی (Knowledge & Wiki)
+  # ============================================
+  wikijs:
+    image: requarks/wiki:latest
+    container_name: wikijs
+    ports:
+      - "9001:3000"
+    restart: unless-stopped
+
+  outline-wiki:
+    image: outlinewiki/outline:latest
+    container_name: outline-wiki
+    ports:
+      - "9002:3000"
+    environment:
+      - SECRET_KEY=change_me_32_chars
+      - UTILS_SECRET=change_me_32_chars
+      - DATABASE_URL=postgres://outline:outline@outline_db:5432/outline
+      - REDIS_URL=redis://redis:6379
+    restart: unless-stopped
+
+  # ============================================
+  # ۸. آموزش الکترونیک (LMS)
+  # ============================================
+  paideia-lms:
+    image: ghcr.io/paideia-lms/paideia:latest
+    container_name: paideia-lms
+    ports:
+      - "10001:3000"
+    restart: unless-stopped
+
+  moodle:
+    image: bitnami/moodle:latest
+    container_name: moodle
+    ports:
+      - "10002:8080"
+    environment:
+      - MOODLE_USERNAME=admin
+      - MOODLE_PASSWORD=admin123
+    restart: unless-stopped
+
+  # ============================================
+  # ۹. ارتباطات و انجمن‌ها (Forum & Community)
+  # ============================================
+  discourse:
+    image: discourse/discourse:latest
+    container_name: discourse
+    ports:
+      - "11001:80"
+    restart: unless-stopped
+
+  nodebb:
+    image: nodebb/docker:latest
+    container_name: nodebb
+    ports:
+      - "11002:4567"
+    restart: unless-stopped
+
+  # ============================================
+  # ۱۰. ساخت فرم و نظرسنجی (Forms & Surveys)
+  # ============================================
+  heyform:
+    image: heyform/community-edition:latest
+    container_name: heyform
+    ports:
+      - "12001:8000"
+    restart: unless-stopped
+
+  # ============================================
+  # ۱۱. وبلاگ و انتشار محتوا (Blog & CMS)
+  # ============================================
+  ghost:
+    image: ghost:latest
+    container_name: ghost
+    ports:
+      - "13001:2368"
+    restart: unless-stopped
+
+  wordpress:
+    image: wordpress:latest
+    container_name: wordpress
+    ports:
+      - "13002:80"
+    restart: unless-stopped
+
+  # ============================================
+  # ۱۲. ذخیره‌سازی و همگام‌سازی فایل (Storage & Sync)
+  # ============================================
+  nextcloud:
+    image: nextcloud:latest
+    container_name: nextcloud
+    ports:
+      - "14001:80"
+    restart: unless-stopped
+
+  seafile:
+    image: seafileltd/seafile:latest
+    container_name: seafile
+    ports:
+      - "14002:80"
+    restart: unless-stopped
+
+  # ============================================
+  # ۱۳. امنیت و اسکن (Security & Scanning)
+  # ============================================
+  nuclei:
+    image: projectdiscovery/nuclei:latest
+    container_name: nuclei
+    entrypoint: ["sleep", "infinity"]
+    restart: unless-stopped
+
+  trivy:
+    image: aquasec/trivy:latest
+    container_name: trivy
+    entrypoint: ["sleep", "infinity"]
+    restart: unless-stopped
+
+  # ============================================
+  # ۱۴. مدیریت کانتینرها و زیرساخت (Infrastructure)
+  # ============================================
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    ports:
+      - "15001:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 86400 --cleanup
+    restart: unless-stopped
+
+  # ============================================
+  # ۱۵. اتصال به پایگاه داده و کش (Database & Cache)
+  # ============================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+# ============================================
+# ذخیره‌سازی‌های دائمی (Volumes)
+# ============================================
+volumes:
+  paperless_data:
+  paperless_media:
+  postgres_data:
