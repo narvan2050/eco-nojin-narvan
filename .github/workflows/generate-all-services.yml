@@ -18,99 +18,117 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: ساخت فایل‌های سرویس‌ها
+      - name: ساخت پوشه‌های اصلی
         run: |
           mkdir -p services
+          mkdir -p src/app/\(dashboard\)
 
-          # لیست سرویس‌ها به صورت "نام:پورت:صفحه:image"
-          SERVICES=(
-            "postgres:5432::postgis/postgis:17-3.5"
-            "redis:6379::redis:7-alpine"
-            "minio:9000::minio/minio:latest"
-            "keycloak:8095:sso:quay.io/keycloak/keycloak:latest"
-            "portainer:9443::portainer/portainer-ce:latest"
-            "nginx:80::nginx:latest"
-            "mattermost:3001:chat:mattermost/mattermost-team-edition:latest"
-            "rocketchat:3002::rocket.chat:latest"
-            "zulip:3003::zulip/docker-zulip:latest"
-            "jitsi:8000:webinar:jitsi/web:latest"
-            "taiga:4001:projects:taigaio/taiga-back:latest"
-            "kanboard:4002::kanboard/kanboard:latest"
-            "leantime:4003::leantime/leantime:latest"
-            "paperless:5001:documents:paperlessngx/paperless-ngx:latest"
-            "bookstack:5002::lscr.io/linuxserver/bookstack:latest"
-            "wikijs:9001:wiki:requarks/wiki:latest"
-            "outline:9002::outlinewiki/outline:latest"
-            "espocrm:6001:crm:espocrm/espocrm:latest"
-            "twenty:6002::twentycrm/twenty:latest"
-            "medusa:9000:store:medusajs/medusa:latest"
-            "modernwms:8081:warehouse:modernwms/modernwms:latest"
-            "erpnext:7001::frappe/erpnext:latest"
-            "odoo:7002::odoo:latest"
-            "metabase:8001:analytics:metabase/metabase:latest"
-            "grafana:8002:monitoring:grafana/grafana:latest"
-            "superset:8003::apache/superset:latest"
-            "moodle:8083:lms:bitnami/moodle:latest"
-            "paideia:10001::ghcr.io/paideia-lms/paideia:latest"
-            "discourse:11001:forum:discourse/discourse:latest"
-            "nodebb:11002::nodebb/docker:latest"
-            "heyform:12001:surveys:heyform/community-edition:latest"
-            "limesurvey:8086::limesurvey/limesurvey:latest"
-            "ghost:13001::ghost:latest"
-            "wordpress:13002::wordpress:latest"
-            "nextcloud:14001::nextcloud:latest"
-            "seafile:14002::seafileltd/seafile:latest"
-            "nuclei: : :projectdiscovery/nuclei:latest"
-            "trivy: : :aquasec/trivy:latest"
-            "zap:8096::owasp/zap2docker-stable:latest"
-            "openadms:8100::dabamos/openadms-node:latest"
-            "odm:8099::opendronemap/odm:latest"
-            "btcpayserver:49392:payments:btcpayserver/btcpayserver:latest"
-            "cryptopay:49400::nightprince/cryptopayserver:latest"
-            "n8n:5678:automation:n8nio/n8n:latest"
-            "flowise:3003:ai-agents:flowiseai/flowise:latest"
-            "ollama:11434::ollama/ollama:latest"
-            "harvestpilot:8101::flemosdesign/harvest-pilot:latest"
-            "geonature:8102::naturalsolutions/geonature-citizen:latest"
-            "digiagriapp:8103::digiagriapp/digiagriapp:latest"
-            "watchtower: : :containrrr/watchtower:latest"
+      - name: ایجاد فایل‌های docker-compose و صفحات
+        shell: bash
+        run: |
+          # تعریف آرایه‌ای از سرویس‌ها: name|port|page|image
+          services=(
+            "postgres|5432||postgis/postgis:17-3.5"
+            "redis|6379||redis:7-alpine"
+            "minio|9000||minio/minio:latest"
+            "keycloak|8095|sso|quay.io/keycloak/keycloak:latest"
+            "portainer|9443||portainer/portainer-ce:latest"
+            "nginx|80||nginx:latest"
+            "mattermost|3001|chat|mattermost/mattermost-team-edition:latest"
+            "rocketchat|3002||rocket.chat:latest"
+            "zulip|3003||zulip/docker-zulip:latest"
+            "jitsi|8000|webinar|jitsi/web:latest"
+            "taiga|4001|projects|taigaio/taiga-back:latest"
+            "kanboard|4002||kanboard/kanboard:latest"
+            "leantime|4003||leantime/leantime:latest"
+            "paperless|5001|documents|paperlessngx/paperless-ngx:latest"
+            "bookstack|5002||lscr.io/linuxserver/bookstack:latest"
+            "wikijs|9001|wiki|requarks/wiki:latest"
+            "outline|9002||outlinewiki/outline:latest"
+            "espocrm|6001|crm|espocrm/espocrm:latest"
+            "twenty|6002||twentycrm/twenty:latest"
+            "medusa|9000|store|medusajs/medusa:latest"
+            "modernwms|8081|warehouse|modernwms/modernwms:latest"
+            "erpnext|7001||frappe/erpnext:latest"
+            "odoo|7002||odoo:latest"
+            "metabase|8001|analytics|metabase/metabase:latest"
+            "grafana|8002|monitoring|grafana/grafana:latest"
+            "superset|8003||apache/superset:latest"
+            "moodle|8083|lms|bitnami/moodle:latest"
+            "paideia|10001||ghcr.io/paideia-lms/paideia:latest"
+            "discourse|11001|forum|discourse/discourse:latest"
+            "nodebb|11002||nodebb/docker:latest"
+            "heyform|12001|surveys|heyform/community-edition:latest"
+            "limesurvey|8086||limesurvey/limesurvey:latest"
+            "ghost|13001||ghost:latest"
+            "wordpress|13002||wordpress:latest"
+            "nextcloud|14001||nextcloud:latest"
+            "seafile|14002||seafileltd/seafile:latest"
+            "nuclei|||projectdiscovery/nuclei:latest"
+            "trivy|||aquasec/trivy:latest"
+            "zap|8096||owasp/zap2docker-stable:latest"
+            "openadms|8100||dabamos/openadms-node:latest"
+            "odm|8099||opendronemap/odm:latest"
+            "btcpayserver|49392|payments|btcpayserver/btcpayserver:latest"
+            "cryptopay|49400||nightprince/cryptopayserver:latest"
+            "n8n|5678|automation|n8nio/n8n:latest"
+            "flowise|3003|ai-agents|flowiseai/flowise:latest"
+            "ollama|11434||ollama/ollama:latest"
+            "harvestpilot|8101||flemosdesign/harvest-pilot:latest"
+            "geonature|8102||naturalsolutions/geonature-citizen:latest"
+            "digiagriapp|8103||digiagriapp/digiagriapp:latest"
+            "watchtower|||containrrr/watchtower:latest"
           )
 
-          for svc in "${SERVICES[@]}"; do
-            IFS=':' read -r name port page image <<< "$svc"
-            dir="services/$name"
-            mkdir -p "$dir"
-            cat > "$dir/docker-compose.yml" << COMPEOF
-          version: '3.8'
-          services:
-            $name:
-              image: $image
-              container_name: $name
-              restart: unless-stopped
-          COMPEOF
+          for item in "${services[@]}"; do
+            IFS='|' read -r name port page image <<< "$item"
+            
+            echo "Processing: $name"
+            
+            # ایجاد پوشه سرویس
+            mkdir -p "services/$name"
+            
+            # ساخت فایل docker-compose.yml
             if [ -n "$port" ]; then
-              sed -i "/container_name/a\      ports:\n        - \"$port:$port\"" "$dir/docker-compose.yml"
+              cat > "services/$name/docker-compose.yml" << EOF
+version: '3.8'
+services:
+  $name:
+    image: $image
+    container_name: $name
+    ports:
+      - "$port:$port"
+    restart: unless-stopped
+EOF
+            else
+              cat > "services/$name/docker-compose.yml" << EOF
+version: '3.8'
+services:
+  $name:
+    image: $image
+    container_name: $name
+    restart: unless-stopped
+EOF
             fi
-
-            # اگر صفحه در پنل مدیریت نیاز دارد
+            
+            # ایجاد صفحه در پنل مدیریت (اگر page تعریف شده باشد)
             if [ -n "$page" ]; then
-              pageDir="src/app/(dashboard)/$page"
-              mkdir -p "$pageDir"
-              cat > "$pageDir/page.tsx" << PAGEEOF
-          export default function ${page^}Page() {
-            return (
-              <div className="flex flex-col h-full">
-                <h2 className="text-2xl font-bold mb-4">${page^}</h2>
-                <iframe src="http://localhost:${port}" className="w-full flex-1 border-0 rounded-lg" style={{ minHeight: "80vh" }} />
-              </div>
-            );
-          }
-          PAGEEOF
+              mkdir -p "src/app/(dashboard)/$page"
+              cat > "src/app/(dashboard)/$page/page.tsx" << EOF
+export default function ${page^}Page() {
+  return (
+    <div className="flex flex-col h-full">
+      <h2 className="text-2xl font-bold mb-4">${page^}</h2>
+      <iframe src="http://localhost:${port}" className="w-full flex-1 border-0 rounded-lg" style={{ minHeight: "80vh" }} />
+    </div>
+  );
+}
+EOF
             fi
           done
 
       - name: Commit و Push
         run: |
           git add .
-          git diff --quiet && git diff --staged --quiet || git commit -m "تولید ۵۰ سرویس و صفحات مربوطه"
+          git diff --quiet && git diff --staged --quiet || git commit -m "ایجاد ۵۰ سرویس و صفحات مربوطه"
           git push origin main
