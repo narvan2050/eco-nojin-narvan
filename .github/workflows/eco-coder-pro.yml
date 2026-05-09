@@ -101,13 +101,18 @@ jobs:
 
       - name: دریافت دستور کاربر
         id: prompt
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TASK: ${{ github.event.inputs.task }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "PROMPT=${{ github.event.inputs.task }}" >> $GITHUB_OUTPUT
+          if [ "$EVENT_NAME" == "workflow_dispatch" ]; then
+            echo "PROMPT=$INPUT_TASK" >> $GITHUB_OUTPUT
           else
             echo "PROMPT=$(cat << 'EOF'
-          ${{ github.event.issue.title }}
-          ${{ github.event.issue.body }}
+          $ISSUE_TITLE
+          $ISSUE_BODY
           EOF
           )" >> $GITHUB_OUTPUT
           fi
