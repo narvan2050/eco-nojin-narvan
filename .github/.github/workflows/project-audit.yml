@@ -1,0 +1,184 @@
+name: "گزارش کامل پروژه"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: دریافت کد
+        uses: actions/checkout@v4
+
+      - name: اجرای تحلیل پروژه
+        run: |
+          python3 << 'PYEOF'
+          import os, json, glob, re
+          from pathlib import Path
+
+          report = {
+              "project": "eco-nojin-narvan",
+              "timestamp": "${{ github.event.repository.updated_at }}",
+              "summary": {},
+              "services": [],
+              "files": {},
+              "workflows": [],
+              "recommendations": []
+          }
+
+          # ۱. بررسی ساختار اصلی
+          required_dirs = ["src", "backend", "services", "deploy", ".github/workflows"]
+          for d in required_dirs:
+              if not os.path.isdir(d):
+                  report["recommendations"].append(f"پوشه ضروری '{d}' وجود ندارد.")
+
+          # ۲. بررسی فایل‌های کلیدی
+          key_files = [
+              "package.json", "requirements.txt", "next.config.js", "tsconfig.json",
+              ".env.example", ".gitignore", "README.md", "LICENSE"
+          ]
+          for f in key_files:
+              exists = os.path.isfile(f)
+              report["files"][f] = "موجود" if exists else "ناموجود"
+              if not exists:
+                  report["recommendations"].append(f"فایل ضروری '{f}' وجود ندارد.")
+
+          # ۳. تحلیل صفحات داشبورد (سرویس‌های iframe)
+          dashboard_path = "src/app/(dashboard)"
+          if os.path.isdir(dashboard_path):
+              services_dirs = [d for d in os.listdir(dashboard_path) if os.path.isdir(os.path.join(dashboard_path, d))]
+              for svc in services_dirs:
+                  page_file = os.path.join(dashboard_path, svc, "page.tsx")
+                  has_page = os.path.isfile(page_file)
+                  # بررسی iframe در فایل
+                  iframe_port = None
+                  if has_page:
+                      with open(page_file, "r", encoding="utf-8", errors="ignore") as f:
+                          content = f.read()
+                          match = re.search(r'localhost:(\d+)', content)
+                          if match:
+                              iframe_port = match.group(1)
+                  report["services"].append({
+                      "name": svc,
+                      "page_exists": has_page,
+                      "iframe_port": iframe_port,
+                      "docker_compose": os.path.isfile(f"services/{svc}/docker-compose.yml") or os.path.isfile(f"{svc}-docker-compose.yml")
+                  })
+          else:
+              report["recommendations"].append("پوشه 'src/app/(dashboard)' یافت نشد.")
+
+          # ۴. تحلیل backend
+          backend_main = "backend/main.py"
+          if os.path.isfile(backend_main):
+              with open(backend_main, "r", encoding="utf-8", errors="ignore") as f:
+                  content = f.read()
+                  report["files"]["backend/main.py"] = "موجود"
+                  # شمارش endpointها
+                  endpoints = re.findall(r'@app\.(get|post|put|delete)\([\'"]([^\'"]+)[\'"]', content)
+                  report["backend_api_endpoints"] = [{"method": m, "path": p} for m, p in endpoints]
+          else:
+              report["recommendations"].append("فایل 'backend/main.py' وجود ندارد. بک‌اند FastAPI راه‌اندازی نشده است.")
+
+          # ۵. شمارش workflowها
+          wf_dir = ".github/workflows"
+          if os.path.isdir(wf_dir):
+              wf_files = glob.glob(f"{wf_dir}/*.yml")
+              report["workflows"] = [os.path.basename(f) for f in wf_files]
+              report["summary"]["total_workflows"] = len(wf_files)
+
+          # ۶. بررسی امنیتی پایه (وجود فایل‌های خاص)
+          security_files = ["SECURITY.md", ".github/CODEOWNERS", "CODE_OF_CONDUCT.md"]
+          for sf in security_files:
+              exists = os.path.isfile(sf)
+              if not exists:
+                  report["recommendations"].append(f"فایل امنیتی/حاکمیتی '{sf}' پیشنهاد می‌شود.")
+
+          # ۷. بررسی docker-compose کلی
+          if os.path.isfile("docker-compose.yml"):
+              report["files"]["docker-compose.yml"] = "موجود"
+          else:
+              report["recommendations"].append("فایل 'docker-compose.yml' اصلی برای یکپارچه‌سازی وجود ندارد.")
+
+          # ۸. بررسی وجود فایل‌های test
+          test_files = glob.glob("**/test_*.py", recursive=True) + glob.glob("**/*.test.{ts,tsx,js,jsx}", recursive=True)
+          report["summary"]["test_files"] = len(test_files)
+          if len(test_files) == 0:
+              report["recommendations"].append("هیچ فایل تستی یافت نشد. افزودن تست‌های Unit و API توصیه می‌شود.")
+
+          # ذخیره گزارش
+          with open("/tmp/audit_report.json", "w", encoding="utf-8") as f:
+              json.dump(report, f, ensure_ascii=False, indent=2)
+          PYEOF
+
+      - name: ساخت Issue با گزارش
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('/tmp/audit_report.json', 'utf8'));
+
+            let body = `# 📊 گزارش تحلیل جامع پروژه\n\n`;
+            body += `**تاریخ:** ${new Date().toLocaleDateString('fa-IR')}\n\n`;
+
+            // خلاصه
+            body += `## 📋 خلاصه\n`;
+            body += `- تعداد Workflowها: **${report.summary.total_workflows || 0}**\n`;
+            body += `- فایل‌های تست: **${report.summary.test_files || 0}**\n`;
+            body += `- تعداد سرویس‌های شناسایی‌شده: **${report.services.length}**\n\n`;
+
+            // فایل‌های کلیدی
+            body += `## 🗂️ فایل‌های اصلی\n`;
+            for (const [file, status] of Object.entries(report.files)) {
+              const emoji = status === 'موجود' ? '✅' : '❌';
+              body += `- ${emoji} **${file}** — ${status}\n`;
+            }
+
+            // سرویس‌ها
+            body += `\n## 🧩 سرویس‌های داشبورد\n`;
+            if (report.services.length > 0) {
+              body += `| سرویس | صفحه | پورت iframe | docker-compose |\n`;
+              body += `| :--- | :---: | :---: | :---: |\n`;
+              for (const svc of report.services) {
+                const page = svc.page_exists ? '✅' : '❌';
+                const port = svc.iframe_port || '--';
+                const compose = svc.docker_compose ? '✅' : '❌';
+                body += `| ${svc.name} | ${page} | ${port} | ${compose} |\n`;
+              }
+            } else {
+              body += `⚠️ هیچ سرویسی در پوشه dashboard یافت نشد.\n`;
+            }
+
+            // Workflowها
+            body += `\n## ⚙️ Workflowها (${report.workflows.length})\n`;
+            for (const wf of report.workflows) {
+              body += `- 📄 ${wf}\n`;
+            }
+
+            // Backend API
+            if (report.backend_api_endpoints) {
+              body += `\n## 🔌 APIهای شناسایی‌شده (${report.backend_api_endpoints.length})\n`;
+              for (const ep of report.backend_api_endpoints) {
+                body += `- \`${ep.method.toUpperCase()} ${ep.path}\`\n`;
+              }
+            }
+
+            // توصیه‌ها
+            if (report.recommendations.length > 0) {
+              body += `\n## 💡 توصیه‌های بهبود\n`;
+              for (const rec of report.recommendations) {
+                body += `- ${rec}\n`;
+              }
+            }
+
+            // ایجاد Issue
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '📊 گزارش تحلیل جامع پروژه',
+              body: body,
+              labels: ['audit-report']
+            });
