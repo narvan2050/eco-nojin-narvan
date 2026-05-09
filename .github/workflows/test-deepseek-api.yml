@@ -1,0 +1,11 @@
+name: Test DeepSeek API
+on: [workflow_dispatch]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -X POST "https://api.deepseek.com/v1/chat/completions" \
+          -H "Authorization: Bearer ${{ secrets.DEEPSEEK_API_KEY }}" \
+          -H "Content-Type: application/json" \
+          -d '{"model":"deepseek-chat","messages":[{"role":"user","content":"Say hello"}]}'
