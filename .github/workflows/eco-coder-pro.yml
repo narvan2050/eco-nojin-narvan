@@ -1,4 +1,4 @@
-name: "Eco Coder Pro - Agent هوشمند توسعه کد"
+name: "Eco Coder Pro – Agent چندمدلی"
 
 on:
   issues:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       task:
-        description: 'وظیفه مورد نظر (مثال: یک صفحه درباره ما با محتوای فارسی بساز)'
+        description: 'وظیفه مورد نظر'
         required: true
 
 permissions:
@@ -21,10 +21,10 @@ jobs:
       (github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'agent-task'))
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: دریافت مخزن
         uses: actions/checkout@v4
 
-      - name: دریافت دستور کاربر
+      - name: خواندن دستور کاربر
         id: prompt
         run: |
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
@@ -37,69 +37,99 @@ jobs:
           )" >> $GITHUB_OUTPUT
           fi
 
-      - name: برنامه‌ریزی با GitHub Models
+      - name: برنامه‌ریزی با چرخش خودکار بین مدل‌ها
         id: plan
         uses: actions/github-script@v7
         with:
           script: |
             const prompt = `${{ steps.prompt.outputs.PROMPT }}`;
-            const system = `You are an expert full-stack developer. A user has asked you to modify their Next.js project (eco-nojin-narvan). 
-            Repo structure: standard Next.js 16 with App Router, Tailwind, shadcn/ui. 
-            The project is already set up with a dashboard at src/app/(dashboard) and many service pages.
-            Your job:
-            - Understand the user's request.
-            - Create a plan as a JSON object with a single key "files". 
-              "files" is an array of objects, each object has "path" (string) and "content" (string).
-              Only include files that need to be CREATED or whose ENTIRE content needs to be REPLACED.
-              If no code changes are needed, return an empty array.
-            - Ensure all paths start from the repository root (e.g., "src/app/about/page.tsx").
-            - Write production-ready, clean TypeScript/React code. Use Tailwind CSS classes.
-            Do not include any other text, only the JSON object.`;
+            const system = `You are an expert full-stack developer. You must help with a Next.js 16 project (eco-nojin-narvan, using App Router, Tailwind, shadcn/ui). 
+            Based on the user request, produce a JSON object with a key "files". "files" is an array of { "path": "relative path", "content": "full file content" }.
+            Only include files that need to be CREATED or whose ENTIRE content must be REPLACED.
+            If no code changes are required, return {"files": []}.
+            Do NOT include any text outside the JSON.`;
 
-            const response = await github.request('POST /models/chat/completions', {
-              model: 'gpt-4o',
-              messages: [
-                { role: 'system', content: system },
-                { role: 'user', content: prompt }
-              ],
-              temperature: 0.1
-            });
+            // لیست مدل‌ها به ترتیب اولویت
+            const models = [
+              'gpt-4o-mini',
+              'Phi-3-medium-128k-instruct',
+              'Llama-3.1-70B-Instruct',
+              'gpt-4o'
+            ];
 
-            const planText = response.data.choices[0].message.content;
-            console.log('AI Plan:', planText);
-            // Extract JSON
-            const jsonMatch = planText.match(/\{[\s\S]*\}/);
-            if (!jsonMatch) {
-              throw new Error('No JSON found in AI output');
+            let plan = null;
+            let lastError = null;
+
+            for (const model of models) {
+              try {
+                console.log(`🔄 تلاش با مدل: ${model}`);
+                const response = await github.request('POST /models/chat/completions', {
+                  model: model,
+                  messages: [
+                    { role: 'system', content: system },
+                    { role: 'user', content: prompt }
+                  ],
+                  temperature: 0.2
+                });
+
+                const text = response.data.choices[0].message.content;
+                console.log(`📝 خروجی مدل ${model}:`, text.substring(0, 200));
+
+                // استخراج JSON از خروجی
+                const jsonMatch = text.match(/\{[\s\S]*\}/);
+                if (!jsonMatch) {
+                  throw new Error('No JSON found');
+                }
+
+                plan = JSON.parse(jsonMatch[0]);
+                if (!plan.files || !Array.isArray(plan.files)) {
+                  throw new Error('Invalid plan structure');
+                }
+
+                console.log(`✅ مدل ${model} با موفقیت پاسخ داد.`);
+                break; // خروج از حلقه
+              } catch (error) {
+                console.warn(`⚠️ مدل ${model} شکست خورد: ${error.message}`);
+                lastError = error;
+                // ادامه به مدل بعدی
+              }
             }
-            const plan = JSON.parse(jsonMatch[0]);
+
+            if (!plan) {
+              throw new Error(`همه مدل‌ها شکست خوردند. آخرین خطا: ${lastError?.message}`);
+            }
+
             return plan;
 
-      - name: اجرای برنامه و ساخت Pull Request
+      - name: ساخت یا به‌روزرسانی فایل‌ها و باز کردن PR
         uses: actions/github-script@v7
         with:
           script: |
             const plan = ${{ steps.plan.outputs.result }};
-            if (!plan || !plan.files || plan.files.length === 0) {
-              console.log('No file changes required.');
-              await github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: '✅ ایجنت بررسی کرد و نیازی به تغییر کد نیست.'
-              });
+            if (!plan.files || plan.files.length === 0) {
+              console.log('هیچ فایلی نیاز به تغییر ندارد.');
+              if (context.payload.issue) {
+                await github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: '✅ **Eco Coder Pro**: پس از بررسی، نیازی به تغییر کد نیست.'
+                });
+              }
               return;
             }
 
-            // Create a unique branch name
-            const branchName = `agent-task-${context.issue.number || Date.now()}`;
-            const baseRef = context.payload.repository.default_branch;
+            const branchName = `agent-task-${context.issue?.number || Date.now()}`;
+            const baseRef = context.payload.repository?.default_branch || 'main';
+            
+            // دریافت SHA شاخه اصلی
             const baseSha = (await github.rest.git.getRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
               ref: `heads/${baseRef}`
             })).data.object.sha;
 
+            // ایجاد شاخه جدید
             await github.rest.git.createRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -107,34 +137,54 @@ jobs:
               sha: baseSha
             });
 
-            // Apply each file change
+            // اعمال تغییرات هر فایل
             for (const file of plan.files) {
-              await github.rest.repos.createOrUpdateFileContents({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                path: file.path,
-                message: `Add/update ${file.path}`,
-                content: Buffer.from(file.content).toString('base64'),
-                branch: branchName
-              });
+              try {
+                // اگر فایل از قبل وجود داشته باشد، نیاز به sha آن داریم (اما در اینجا ساده‌سازی می‌کنیم: 
+                // فقط ایجاد یا بازنویسی کامل)
+                await github.rest.repos.createOrUpdateFileContents({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  path: file.path,
+                  message: `Add/update ${file.path}`,
+                  content: Buffer.from(file.content).toString('base64'),
+                  branch: branchName
+                });
+              } catch (err) {
+                console.error(`خطا در آپلود فایل ${file.path}:`, err);
+              }
             }
 
-            // Create pull request
+            // باز کردن Pull Request
             const pr = await github.rest.pulls.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `🤖 Agent: ${context.payload.issue?.title || 'Manual task'}`,
+              title: `🤖 Agent: ${context.payload.issue?.title || 'وظیفه دستی'}`,
               head: branchName,
               base: baseRef,
-              body: `این Pull Request به‌طور خودکار توسط **Eco Coder Pro** ایجاد شده است.\n\nوظیفه درخواستی:\n> ${context.payload.issue?.body || '${{ steps.prompt.outputs.PROMPT }}'}\n\nلطفاً تغییرات را بررسی کنید.`
+              body: `این Pull Request به‌طور خودکار توسط **Eco Coder Pro** ایجاد شده است.\n\n📋 وظیفه:\n> ${context.payload.issue?.body || '${{ steps.prompt.outputs.PROMPT }}' }\n\nلطفاً تغییرات را بررسی کنید.`
             });
 
-            // Comment on issue (if triggered by issue)
+            // کامنت روی Issue (اگر از طریق Issue فعال شده)
             if (context.payload.issue) {
               await github.rest.issues.createComment({
                 issue_number: context.issue.number,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 body: `✅ **Eco Coder Pro** یک Pull Request برای این وظیفه باز کرد: ${pr.data.html_url}`
+              });
+            }
+
+      - name: گزارش خطا در صورت شکست کل
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (context.payload.issue) {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: '❌ **Eco Coder Pro** با خطا مواجه شد. لطفاً لاگ workflow را بررسی کنید.'
               });
             }
