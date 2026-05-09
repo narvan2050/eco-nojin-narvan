@@ -1,4 +1,4 @@
-name: "Eco Coder Pro – Agent چندمدلی"
+name: "Eco Coder Pro – نسخه پایدار"
 
 on:
   issues:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       task:
-        description: 'وظیفه مورد نظر'
+        description: 'وظیفه'
         required: true
 
 permissions:
@@ -21,170 +21,150 @@ jobs:
       (github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'agent-task'))
     runs-on: ubuntu-latest
     steps:
-      - name: دریافت مخزن
+      - name: دریافت کد
         uses: actions/checkout@v4
 
-      - name: خواندن دستور کاربر
+      - name: نصب Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: ایجاد اسکریپت برنامه‌ریزی
+        run: |
+          cat << 'SCRIPT' > /tmp/plan-agent.mjs
+          import { writeFileSync } from 'fs';
+
+          const prompt = process.argv[2];
+          if (!prompt) {
+            console.error("No prompt provided");
+            process.exit(1);
+          }
+
+          const models = [
+            'gpt-4o-mini',
+            'Phi-3-medium-128k-instruct',
+            'Llama-3.1-70B-Instruct',
+            'gpt-4o'
+          ];
+
+          const token = process.env.GITHUB_TOKEN;
+          const repo = process.env.GITHUB_REPOSITORY;
+
+          const system = `You are an expert full-stack developer. Based on the user request, produce a JSON object with key "files". "files" is an array of { "path": "...", "content": "..." }. Only include files to CREATE or whose ENTIRE content must be REPLACED. If no code changes are needed, return {"files": []}. Do NOT include any text outside the JSON.`;
+
+          async function tryModel(model) {
+            console.log(`Trying model: ${model}`);
+            const res = await fetch(`https://models.github.com/${repo}/chat/completions`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                model: model,
+                messages: [
+                  { role: 'system', content: system },
+                  { role: 'user', content: prompt }
+                ],
+                temperature: 0.2
+              })
+            });
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status} ${res.statusText}`);
+            }
+            const data = await res.json();
+            const text = data.choices[0].message.content;
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) throw new Error('No JSON found');
+            const plan = JSON.parse(jsonMatch[0]);
+            if (!plan.files || !Array.isArray(plan.files)) throw new Error('Invalid plan');
+            return plan;
+          }
+
+          async function main() {
+            for (const model of models) {
+              try {
+                const plan = await tryModel(model);
+                writeFileSync('/tmp/plan.json', JSON.stringify(plan));
+                console.log(`Success with model ${model}`);
+                return;
+              } catch (e) {
+                console.warn(`Model ${model} failed: ${e.message}`);
+              }
+            }
+            console.error("All models failed");
+            process.exit(1);
+          }
+
+          main();
+          SCRIPT
+
+      - name: دریافت دستور کاربر
         id: prompt
         run: |
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             echo "PROMPT=${{ github.event.inputs.task }}" >> $GITHUB_OUTPUT
           else
-            echo "PROMPT=$(cat <<'EOF'
+            echo "PROMPT=$(cat << 'EOF'
           ${{ github.event.issue.title }}
           ${{ github.event.issue.body }}
           EOF
           )" >> $GITHUB_OUTPUT
           fi
 
-      - name: برنامه‌ریزی با چرخش خودکار بین مدل‌ها
-        id: plan
+      - name: اجرای اسکریپت برنامه‌ریزی
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          node /tmp/plan-agent.mjs "${{ steps.prompt.outputs.PROMPT }}"
+
+      - name: ساخت فایل‌ها و Pull Request
         uses: actions/github-script@v7
         with:
           script: |
-            const prompt = `${{ steps.prompt.outputs.PROMPT }}`;
-            const system = `You are an expert full-stack developer. You must help with a Next.js 16 project (eco-nojin-narvan, using App Router, Tailwind, shadcn/ui). 
-            Based on the user request, produce a JSON object with a key "files". "files" is an array of { "path": "relative path", "content": "full file content" }.
-            Only include files that need to be CREATED or whose ENTIRE content must be REPLACED.
-            If no code changes are required, return {"files": []}.
-            Do NOT include any text outside the JSON.`;
-
-            // لیست مدل‌ها به ترتیب اولویت
-            const models = [
-              'gpt-4o-mini',
-              'Phi-3-medium-128k-instruct',
-              'Llama-3.1-70B-Instruct',
-              'gpt-4o'
-            ];
-
-            let plan = null;
-            let lastError = null;
-
-            for (const model of models) {
-              try {
-                console.log(`🔄 تلاش با مدل: ${model}`);
-                const response = await github.request('POST /models/chat/completions', {
-                  model: model,
-                  messages: [
-                    { role: 'system', content: system },
-                    { role: 'user', content: prompt }
-                  ],
-                  temperature: 0.2
-                });
-
-                const text = response.data.choices[0].message.content;
-                console.log(`📝 خروجی مدل ${model}:`, text.substring(0, 200));
-
-                // استخراج JSON از خروجی
-                const jsonMatch = text.match(/\{[\s\S]*\}/);
-                if (!jsonMatch) {
-                  throw new Error('No JSON found');
-                }
-
-                plan = JSON.parse(jsonMatch[0]);
-                if (!plan.files || !Array.isArray(plan.files)) {
-                  throw new Error('Invalid plan structure');
-                }
-
-                console.log(`✅ مدل ${model} با موفقیت پاسخ داد.`);
-                break; // خروج از حلقه
-              } catch (error) {
-                console.warn(`⚠️ مدل ${model} شکست خورد: ${error.message}`);
-                lastError = error;
-                // ادامه به مدل بعدی
-              }
-            }
-
-            if (!plan) {
-              throw new Error(`همه مدل‌ها شکست خوردند. آخرین خطا: ${lastError?.message}`);
-            }
-
-            return plan;
-
-      - name: ساخت یا به‌روزرسانی فایل‌ها و باز کردن PR
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const plan = ${{ steps.plan.outputs.result }};
-            if (!plan.files || plan.files.length === 0) {
-              console.log('هیچ فایلی نیاز به تغییر ندارد.');
-              if (context.payload.issue) {
-                await github.rest.issues.createComment({
-                  issue_number: context.issue.number,
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  body: '✅ **Eco Coder Pro**: پس از بررسی، نیازی به تغییر کد نیست.'
-                });
-              }
+            const fs = require('fs');
+            let plan;
+            try {
+              plan = JSON.parse(fs.readFileSync('/tmp/plan.json', 'utf8'));
+            } catch (e) {
+              console.log('No plan file found, skipping.');
               return;
             }
+            if (!plan.files || plan.files.length === 0) return;
 
             const branchName = `agent-task-${context.issue?.number || Date.now()}`;
-            const baseRef = context.payload.repository?.default_branch || 'main';
-            
-            // دریافت SHA شاخه اصلی
+            const baseRef = context.payload.repository.default_branch;
             const baseSha = (await github.rest.git.getRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: `heads/${baseRef}`
+              owner: context.repo.owner, repo: context.repo.repo, ref: `heads/${baseRef}`
             })).data.object.sha;
 
-            // ایجاد شاخه جدید
             await github.rest.git.createRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: `refs/heads/${branchName}`,
-              sha: baseSha
+              owner: context.repo.owner, repo: context.repo.repo,
+              ref: `refs/heads/${branchName}`, sha: baseSha
             });
 
-            // اعمال تغییرات هر فایل
             for (const file of plan.files) {
-              try {
-                // اگر فایل از قبل وجود داشته باشد، نیاز به sha آن داریم (اما در اینجا ساده‌سازی می‌کنیم: 
-                // فقط ایجاد یا بازنویسی کامل)
-                await github.rest.repos.createOrUpdateFileContents({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  path: file.path,
-                  message: `Add/update ${file.path}`,
-                  content: Buffer.from(file.content).toString('base64'),
-                  branch: branchName
-                });
-              } catch (err) {
-                console.error(`خطا در آپلود فایل ${file.path}:`, err);
-              }
-            }
-
-            // باز کردن Pull Request
-            const pr = await github.rest.pulls.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `🤖 Agent: ${context.payload.issue?.title || 'وظیفه دستی'}`,
-              head: branchName,
-              base: baseRef,
-              body: `این Pull Request به‌طور خودکار توسط **Eco Coder Pro** ایجاد شده است.\n\n📋 وظیفه:\n> ${context.payload.issue?.body || '${{ steps.prompt.outputs.PROMPT }}' }\n\nلطفاً تغییرات را بررسی کنید.`
-            });
-
-            // کامنت روی Issue (اگر از طریق Issue فعال شده)
-            if (context.payload.issue) {
-              await github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: `✅ **Eco Coder Pro** یک Pull Request برای این وظیفه باز کرد: ${pr.data.html_url}`
+              await github.rest.repos.createOrUpdateFileContents({
+                owner: context.repo.owner, repo: context.repo.repo,
+                path: file.path,
+                message: `Update ${file.path}`,
+                content: Buffer.from(file.content).toString('base64'),
+                branch: branchName
               });
             }
 
-      - name: گزارش خطا در صورت شکست کل
-        if: failure()
-        uses: actions/github-script@v7
-        with:
-          script: |
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner, repo: context.repo.repo,
+              title: `🤖 Agent: ${context.payload.issue?.title || 'Task'}`,
+              head: branchName, base: baseRef,
+              body: `Auto-generated PR by Eco Coder Pro.\n\nTask: ${context.payload.issue?.body || '${{ steps.prompt.outputs.PROMPT }}'}`
+            });
+
             if (context.payload.issue) {
               await github.rest.issues.createComment({
                 issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: '❌ **Eco Coder Pro** با خطا مواجه شد. لطفاً لاگ workflow را بررسی کنید.'
+                owner: context.repo.owner, repo: context.repo.repo,
+                body: `✅ PR created: ${pr.data.html_url}`
               });
             }
